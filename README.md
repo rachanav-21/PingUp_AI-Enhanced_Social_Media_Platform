@@ -2,9 +2,9 @@
 
 PingUp is a full-stack social media networking platform designed to provide an interactive and secure environment for users to connect, share content, communicate, and explore AI-powered features. It combines modern social networking functionality with AI-powered assistance, insights, and content generation.
 
-## 🚀 Features
+## Features
 
-### 👤 User & Authentication
+## User & Authentication
 
 * User registration and login using JWT authentication
 * Secure password hashing with bcrypt
@@ -12,7 +12,7 @@ PingUp is a full-stack social media networking platform designed to provide an i
 * Profile and cover photo updates
 * Username, bio, location, followers and following
 
-### 📱 Social Networking
+## Social Networking
 
 * Create and publish text, image, and text-with-image posts
 * Multiple images with individual captions
@@ -23,21 +23,21 @@ PingUp is a full-stack social media networking platform designed to provide an i
 * Follow and unfollow users
 * Connection request management
 
-### 📖 Stories
+## Stories
 
 * Create and view stories
 * 24-hour story expiration
 * Story media support
 * Interactive story viewing
 
-### 💬 Messaging
+## Messaging
 
 * One-to-one messaging
 * Image and document sharing
 * Share posts directly through chat
 * Recent conversations and user profiles
 
-### 🤖 AI-Powered Features
+## AI-Powered Features
 
 * **AI Chatbot** for interactive AI-powered conversations
 * AI-generated social media caption suggestions
@@ -47,7 +47,7 @@ PingUp is a full-stack social media networking platform designed to provide an i
 * Gemini-powered AI functionality
 * Dedicated PingUpAI interface integrating multiple AI capabilities
 
-### 📅 Additional Features
+## Additional Features
 
 * Time Capsule posts with scheduled publishing
 * Emoji support for comments and interactions
@@ -57,7 +57,7 @@ PingUp is a full-stack social media networking platform designed to provide an i
 * Email functionality using Nodemailer
 * Background/event processing using Inngest
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 ### Frontend
 
