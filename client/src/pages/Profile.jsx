@@ -58,8 +58,84 @@ const Profile = () => {
   // GET JWT TOKEN
   // =====================================================
 
-  const getToken = async () => {
+  const getToken = () => {
     return localStorage.getItem('token')
+  }
+
+  // =====================================================
+  // GET USER ID FROM JWT
+  // =====================================================
+
+  const getUserIdFromToken = () => {
+
+    try {
+
+      const token = localStorage.getItem('token')
+
+      if (!token) {
+        return null
+      }
+
+      const parts = token.split('.')
+
+      if (parts.length !== 3) {
+        console.error('Invalid JWT token format')
+        return null
+      }
+
+      const base64Url = parts[1]
+
+      const base64 = base64Url
+        .replace(/-/g, '+')
+        .replace(/_/g, '/')
+
+      const jsonPayload = decodeURIComponent(
+        atob(base64)
+          .split('')
+          .map(
+            (char) =>
+              '%' +
+              (
+                '00' +
+                char.charCodeAt(0).toString(16)
+              ).slice(-2)
+          )
+          .join('')
+      )
+
+      const payload = JSON.parse(jsonPayload)
+
+      console.log(
+        'JWT PAYLOAD:',
+        payload
+      )
+
+      return payload?.userId || null
+
+    } catch (error) {
+
+      console.error(
+        'JWT DECODE ERROR:',
+        error
+      )
+
+      return null
+    }
+  }
+
+  // =====================================================
+  // CHECK MONGODB OBJECT ID
+  // =====================================================
+
+  const isValidMongoId = (id) => {
+
+    if (!id) {
+      return false
+    }
+
+    return /^[0-9a-fA-F]{24}$/.test(
+      String(id)
+    )
   }
 
   // =====================================================
@@ -69,15 +145,38 @@ const Profile = () => {
   const fetchUser = async (id) => {
 
     if (!id) {
+
       console.log(
         'PROFILE: No user ID provided'
       )
+
+      return
+    }
+
+    // =================================================
+    // NEVER SEND CLERK ID TO MONGODB
+    // =================================================
+
+    if (!isValidMongoId(id)) {
+
+      console.error(
+        'PROFILE: Invalid MongoDB user ID:',
+        id
+      )
+
+      toast.error(
+        'Invalid user profile ID. Please login again.'
+      )
+
+      setUser(null)
+      setPosts([])
+
       return
     }
 
     try {
 
-      const token = await getToken()
+      const token = getToken()
 
       if (!token) {
 
@@ -129,7 +228,6 @@ const Profile = () => {
         )
 
         setUser(null)
-
         setPosts([])
       }
 
@@ -141,7 +239,6 @@ const Profile = () => {
       )
 
       setUser(null)
-
       setPosts([])
 
       toast.error(
@@ -166,7 +263,7 @@ const Profile = () => {
 
     try {
 
-      const token = await getToken()
+      const token = getToken()
 
       if (!token) {
 
@@ -222,6 +319,7 @@ const Profile = () => {
     } finally {
 
       setInsightsLoading(false)
+
     }
   }
 
@@ -231,20 +329,149 @@ const Profile = () => {
 
   useEffect(() => {
 
-    const id =
-      profileId ||
-      currentUser?._id
+    const loadProfile = async () => {
 
-    if (id) {
+      // =================================================
+      // CASE 1:
+      // VIEWING ANOTHER USER'S PROFILE
+      // =================================================
 
-      fetchUser(id)
+      if (profileId) {
 
+        console.log(
+          '===================================='
+        )
+
+        console.log(
+          'PROFILE PARAM:',
+          profileId
+        )
+
+        console.log(
+          'REDUX USER ID:',
+          currentUser?._id
+        )
+
+        console.log(
+          'PROFILE ID BEING USED:',
+          profileId
+        )
+
+        console.log(
+          'IS VALID MONGODB ID:',
+          isValidMongoId(profileId)
+        )
+
+        console.log(
+          '===================================='
+        )
+
+        if (!isValidMongoId(profileId)) {
+
+          console.error(
+            'PROFILE: Invalid profile ID:',
+            profileId
+          )
+
+          toast.error(
+            'Invalid user profile ID'
+          )
+
+          setUser(null)
+          setPosts([])
+
+          return
+        }
+
+        await fetchUser(profileId)
+
+        return
+      }
+
+      // =================================================
+      // CASE 2:
+      // CURRENT USER PROFILE
+      //
+      // Use MongoDB ID directly from JWT.
+      // =================================================
+
+      const jwtUserId =
+        getUserIdFromToken()
+
+      console.log(
+        '===================================='
+      )
+
+      console.log(
+        'PROFILE PARAM:',
+        profileId
+      )
+
+      console.log(
+        'REDUX USER ID:',
+        currentUser?._id
+      )
+
+      console.log(
+        'JWT USER ID:',
+        jwtUserId
+      )
+
+      console.log(
+        'PROFILE ID BEING USED:',
+        jwtUserId
+      )
+
+      console.log(
+        'IS VALID MONGODB ID:',
+        isValidMongoId(jwtUserId)
+      )
+
+      console.log(
+        '===================================='
+      )
+
+      // =================================================
+      // NO JWT USER ID
+      // =================================================
+
+      if (!jwtUserId) {
+
+        toast.error(
+          'Please login again'
+        )
+
+        return
+      }
+
+      // =================================================
+      // INVALID JWT USER ID
+      // =================================================
+
+      if (!isValidMongoId(jwtUserId)) {
+
+        console.error(
+          'PROFILE: JWT contains invalid MongoDB ID:',
+          jwtUserId
+        )
+
+        toast.error(
+          'Invalid login session. Please logout and login again.'
+        )
+
+        return
+      }
+
+      // =================================================
+      // FETCH CURRENT USER
+      // =================================================
+
+      await fetchUser(jwtUserId)
     }
 
-  }, [
-    profileId,
-    currentUser?._id
-  ])
+    loadProfile()
+
+  }, [profileId])
 
   // =====================================================
   // LOAD AI INSIGHTS
@@ -269,6 +496,174 @@ const Profile = () => {
   ])
 
   // =====================================================
+  // GET VIDEO URL
+  // =====================================================
+
+  const getVideoUrl = (post) => {
+
+    // Direct video fields
+    const directVideo =
+      post?.video_url ||
+      post?.videoUrl ||
+      post?.video ||
+      post?.media_url ||
+      post?.mediaUrl
+
+    if (
+      typeof directVideo === 'string' &&
+      directVideo.trim() !== ''
+    ) {
+      return directVideo.trim()
+    }
+
+    // If server stores videos in video_urls
+    if (
+      Array.isArray(post?.video_urls) &&
+      post.video_urls.length > 0
+    ) {
+
+      const firstVideo =
+        post.video_urls[0]
+
+      if (
+        typeof firstVideo === 'string' &&
+        firstVideo.trim() !== ''
+      ) {
+        return firstVideo.trim()
+      }
+
+      if (
+        firstVideo &&
+        typeof firstVideo.url === 'string' &&
+        firstVideo.url.trim() !== ''
+      ) {
+        return firstVideo.url.trim()
+      }
+    }
+
+    // If media_urls contains video
+    if (
+      Array.isArray(post?.media_urls) &&
+      post.media_urls.length > 0
+    ) {
+
+      const videoItem =
+        post.media_urls.find(
+          (item) =>
+            item?.type === 'video' ||
+            item?.media_type === 'video' ||
+            item?.resource_type === 'video'
+        )
+
+      if (
+        videoItem &&
+        typeof videoItem.url === 'string' &&
+        videoItem.url.trim() !== ''
+      ) {
+        return videoItem.url.trim()
+      }
+    }
+
+    return ''
+  }
+
+  // =====================================================
+  // CHECK VIDEO URL
+  // =====================================================
+
+  const isVideoUrl = (url) => {
+
+    if (!url) {
+      return false
+    }
+
+    return /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(
+      url
+    )
+  }
+
+  // =====================================================
+  // CHECK IF POST IS VIDEO
+  // =====================================================
+
+  const isVideoPost = (post) => {
+
+    const videoUrl =
+      getVideoUrl(post)
+
+    return (
+      videoUrl !== '' ||
+      post?.post_type === 'video' ||
+      post?.postType === 'video' ||
+      post?.media_type === 'video' ||
+      post?.mediaType === 'video' ||
+      post?.type === 'video'
+    )
+  }
+
+  // =====================================================
+  // SAFE COVER PHOTO
+  // =====================================================
+
+  const userCoverPhoto =
+    typeof user?.cover_photo === 'string' &&
+    user.cover_photo.trim() !== ''
+      ? user.cover_photo
+      : null
+
+  // =====================================================
+  // MEDIA POSTS
+  // =====================================================
+
+  const mediaPosts =
+    posts.filter((post) => {
+
+      // Check images
+      const hasImages =
+        Array.isArray(post?.image_urls) &&
+        post.image_urls.some(
+          (image) =>
+            image &&
+            typeof image.url === 'string' &&
+            image.url.trim() !== ''
+        )
+
+      // Check direct video
+      const hasVideo =
+        isVideoPost(post)
+
+      // Check video inside image_urls
+      const hasVideoInsideImages =
+        Array.isArray(post?.image_urls) &&
+        post.image_urls.some(
+          (image) => {
+
+            if (!image) {
+              return false
+            }
+
+            const url =
+              typeof image.url === 'string'
+                ? image.url.trim()
+                : ''
+
+            return (
+              image.type === 'video' ||
+              image.media_type === 'video' ||
+              image.resource_type === 'video' ||
+              isVideoUrl(url)
+            )
+          }
+        )
+
+      return (
+        hasImages ||
+        hasVideo ||
+        hasVideoInsideImages
+      )
+    })
+
+  // =====================================================
   // LOADING
   // =====================================================
 
@@ -277,30 +672,6 @@ const Profile = () => {
     return <Loading />
 
   }
-
-  // =====================================================
-  // SAFE DATA
-  // =====================================================
-
-  const userCoverPhoto =
-    typeof user.cover_photo === 'string' &&
-    user.cover_photo.trim() !== ''
-      ? user.cover_photo
-      : null
-
-  const mediaPosts =
-    posts.filter(
-      (post) =>
-        Array.isArray(
-          post.image_urls
-        ) &&
-        post.image_urls.some(
-          (image) =>
-            image &&
-            typeof image.url === 'string' &&
-            image.url.trim() !== ''
-        )
-    )
 
   // =====================================================
   // RENDER
@@ -380,7 +751,9 @@ const Profile = () => {
                 key={tab.key}
                 type='button'
                 onClick={() =>
-                  setActiveTab(tab.key)
+                  setActiveTab(
+                    tab.key
+                  )
                 }
                 className={`flex-1 px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
                   activeTab === tab.key
@@ -389,7 +762,8 @@ const Profile = () => {
                 }`}
               >
 
-                {tab.key === 'insights' && (
+                {tab.key ===
+                  'insights' && (
 
                   <Sparkles
                     className='w-4 h-4 inline mr-1'
@@ -461,66 +835,188 @@ const Profile = () => {
 
               {mediaPosts.length > 0 ? (
 
-                mediaPosts.map((post) => (
+                mediaPosts.map((post) => {
 
-                  <React.Fragment
-                    key={post._id}
-                  >
+                  const postVideoUrl =
+                    getVideoUrl(post)
 
-                    {Array.isArray(
-                      post.image_urls
-                    ) &&
+                  const postIsVideo =
+                    isVideoPost(post)
 
-                      post.image_urls.map(
-                        (image, index) => {
+                  return (
 
-                          const imageUrl =
-                            typeof image?.url === 'string'
-                              ? image.url.trim()
-                              : ''
+                    <React.Fragment
+                      key={post._id}
+                    >
 
-                          if (!imageUrl) {
-                            return null
-                          }
+                      {/* =================================================
+                          DIRECT VIDEO POST
+                      ================================================= */}
 
-                          return (
+                      {postIsVideo &&
+                        postVideoUrl && (
 
-                            <Link
-                              target='_blank'
-                              rel='noopener noreferrer'
-                              to={imageUrl}
-                              key={`${post._id}-${index}`}
-                              className='relative group'
-                            >
+                        <div
+                          className='relative group w-64 aspect-video overflow-hidden bg-black'
+                        >
 
-                              <img
-                                src={imageUrl}
-                                className='w-64 aspect-video object-cover'
-                                alt={
-                                  image?.caption ||
-                                  'Post image'
-                                }
-                              />
+                          <video
+                            src={postVideoUrl}
+                            controls
+                            preload='metadata'
+                            playsInline
+                            className='w-full h-full object-cover'
+                            onError={() => {
 
-                              <p className='absolute bottom-0 right-0 text-xs p-1 px-3 backdrop-blur-xl text-white opacity-0 group-hover:opacity-100 transition duration-300'>
+                              console.error(
+                                'VIDEO LOAD ERROR:',
+                                postVideoUrl
+                              )
 
-                                Posted{' '}
+                            }}
+                          />
 
-                                {moment(
-                                  post.createdAt
-                                ).fromNow()}
+                          <p className='absolute bottom-0 right-0 text-xs p-1 px-3 backdrop-blur-xl text-white opacity-0 group-hover:opacity-100 transition duration-300 pointer-events-none'>
 
-                              </p>
+                            Posted{' '}
 
-                            </Link>
+                            {moment(
+                              post.createdAt
+                            ).fromNow()}
 
-                          )
-                        }
+                          </p>
+
+                        </div>
+
                       )}
 
-                  </React.Fragment>
+                      {/* =================================================
+                          IMAGE / VIDEO ITEMS
+                      ================================================= */}
 
-                ))
+                      {Array.isArray(
+                        post.image_urls
+                      ) &&
+
+                        post.image_urls.map(
+                          (image, index) => {
+
+                            const mediaUrl =
+                              typeof image?.url === 'string'
+                                ? image.url.trim()
+                                : ''
+
+                            if (!mediaUrl) {
+                              return null
+                            }
+
+                            // =============================================
+                            // CHECK IF THIS ITEM IS VIDEO
+                            // =============================================
+
+                            const itemIsVideo =
+                              image?.type === 'video' ||
+                              image?.media_type === 'video' ||
+                              image?.resource_type === 'video' ||
+                              isVideoUrl(mediaUrl)
+
+                            // =============================================
+                            // VIDEO ITEM
+                            // =============================================
+
+                            if (itemIsVideo) {
+
+                              return (
+
+                                <div
+                                  key={`${post._id}-video-${index}`}
+                                  className='relative group w-64 aspect-video overflow-hidden bg-black'
+                                >
+
+                                  <video
+                                    src={mediaUrl}
+                                    controls
+                                    preload='metadata'
+                                    playsInline
+                                    className='w-full h-full object-cover'
+                                    onError={() => {
+
+                                      console.error(
+                                        'VIDEO ITEM LOAD ERROR:',
+                                        mediaUrl
+                                      )
+
+                                    }}
+                                  />
+
+                                  <p className='absolute bottom-0 right-0 text-xs p-1 px-3 backdrop-blur-xl text-white opacity-0 group-hover:opacity-100 transition duration-300 pointer-events-none'>
+
+                                    Posted{' '}
+
+                                    {moment(
+                                      post.createdAt
+                                    ).fromNow()}
+
+                                  </p>
+
+                                </div>
+
+                              )
+                            }
+
+                            // =============================================
+                            // IMAGE ITEM
+                            // =============================================
+
+                            return (
+
+                              <Link
+                                target='_blank'
+                                rel='noopener noreferrer'
+                                to={mediaUrl}
+                                key={`${post._id}-${index}`}
+                                className='relative group'
+                              >
+
+                                <img
+                                  src={mediaUrl}
+                                  className='w-64 aspect-video object-cover'
+                                  alt={
+                                    image?.caption ||
+                                    'Post image'
+                                  }
+                                  onError={(e) => {
+
+                                    console.error(
+                                      'IMAGE LOAD ERROR:',
+                                      mediaUrl
+                                    )
+
+                                  }}
+                                />
+
+                                <p className='absolute bottom-0 right-0 text-xs p-1 px-3 backdrop-blur-xl text-white opacity-0 group-hover:opacity-100 transition duration-300'>
+
+                                  Posted{' '}
+
+                                  {moment(
+                                    post.createdAt
+                                  ).fromNow()}
+
+                                </p>
+
+                              </Link>
+
+                            )
+
+                          }
+                        )}
+
+                    </React.Fragment>
+
+                  )
+
+                })
 
               ) : (
 
@@ -545,10 +1041,6 @@ const Profile = () => {
           {activeTab === 'insights' && (
 
             <div className='mt-6'>
-
-              {/* =================================================
-                  LOADING
-              ================================================= */}
 
               {insightsLoading ? (
 
@@ -605,15 +1097,11 @@ const Profile = () => {
                       <div>
 
                         <h2 className='text-2xl font-bold'>
-
                           AI Profile Insights
-
                         </h2>
 
                         <p className='text-white/80 text-sm mt-1'>
-
                           Personalized insights from your PingUp activity
-
                         </p>
 
                       </div>
@@ -628,8 +1116,6 @@ const Profile = () => {
 
                   <div className='grid grid-cols-1 md:grid-cols-2 gap-5'>
 
-                    {/* ACTIVITY */}
-
                     <div className='bg-white rounded-2xl shadow p-5'>
 
                       <div className='flex items-center gap-3 mb-4'>
@@ -641,9 +1127,7 @@ const Profile = () => {
                         </div>
 
                         <h3 className='font-semibold text-gray-900'>
-
                           Posting Activity
-
                         </h3>
 
                       </div>
@@ -657,8 +1141,6 @@ const Profile = () => {
 
                     </div>
 
-                    {/* CONTENT STYLE */}
-
                     <div className='bg-white rounded-2xl shadow p-5'>
 
                       <div className='flex items-center gap-3 mb-4'>
@@ -670,9 +1152,7 @@ const Profile = () => {
                         </div>
 
                         <h3 className='font-semibold text-gray-900'>
-
                           Content Style
-
                         </h3>
 
                       </div>
@@ -703,9 +1183,7 @@ const Profile = () => {
                       </div>
 
                       <h3 className='font-semibold text-gray-900'>
-
                         Overall Content Mood
-
                       </h3>
 
                     </div>
@@ -738,9 +1216,7 @@ const Profile = () => {
                       </div>
 
                       <h3 className='font-semibold text-gray-900'>
-
                         Your Content Themes
-
                       </h3>
 
                     </div>
@@ -759,9 +1235,7 @@ const Profile = () => {
                               key={index}
                               className='px-4 py-2 rounded-full bg-indigo-50 text-indigo-700 text-sm font-medium'
                             >
-
                               #{theme}
-
                             </span>
 
                           )
@@ -771,9 +1245,7 @@ const Profile = () => {
                       ) : (
 
                         <p className='text-gray-500 text-sm'>
-
                           No specific themes detected yet.
-
                         </p>
 
                       )}
@@ -797,9 +1269,7 @@ const Profile = () => {
                       </div>
 
                       <h3 className='font-semibold text-gray-900'>
-
                         AI Recommendation
-
                       </h3>
 
                     </div>
@@ -832,9 +1302,7 @@ const Profile = () => {
                       </div>
 
                       <h3 className='font-semibold text-gray-900'>
-
                         Content You Should Try
-
                       </h3>
 
                     </div>
@@ -856,8 +1324,12 @@ const Profile = () => {
 
                     <button
                       type='button'
-                      onClick={fetchAIInsights}
-                      disabled={insightsLoading}
+                      onClick={
+                        fetchAIInsights
+                      }
+                      disabled={
+                        insightsLoading
+                      }
                       className='flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition cursor-pointer disabled:opacity-50'
                     >
 
@@ -885,10 +1357,6 @@ const Profile = () => {
 
               ) : (
 
-                /* =================================================
-                   NO INSIGHTS
-                ================================================= */
-
                 <div className='bg-white rounded-2xl shadow p-10 text-center'>
 
                   <div className='flex justify-center mb-4'>
@@ -902,26 +1370,24 @@ const Profile = () => {
                   </div>
 
                   <h2 className='text-xl font-bold text-gray-900'>
-
                     Discover Your AI Insights
-
                   </h2>
 
                   <p className='text-gray-500 mt-2'>
-
                     Let PingUp AI analyze your posts and discover your content style.
-
                   </p>
 
                   <button
                     type='button'
-                    onClick={fetchAIInsights}
-                    disabled={insightsLoading}
+                    onClick={
+                      fetchAIInsights
+                    }
+                    disabled={
+                      insightsLoading
+                    }
                     className='mt-5 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition cursor-pointer disabled:opacity-50'
                   >
-
                     Generate AI Insights
-
                   </button>
 
                 </div>
@@ -943,7 +1409,9 @@ const Profile = () => {
       {showEdit && (
 
         <ProfileModal
-          setShowEdit={setShowEdit}
+          setShowEdit={
+            setShowEdit
+          }
         />
 
       )}

@@ -153,7 +153,7 @@ const PostCard = ({
 
 
   // =====================================================
-  // IMAGE CAROUSEL STATE
+  // MEDIA CAROUSEL STATE
   // =====================================================
 
   const [
@@ -430,6 +430,129 @@ const PostCard = ({
 
 
   // =====================================================
+  // MEDIA HELPER
+  // =====================================================
+
+  const getMediaUrl = (
+    media
+  ) => {
+
+    if (
+      typeof media ===
+      'string'
+    ) {
+      return media
+    }
+
+    if (
+      media &&
+      typeof media ===
+      'object'
+    ) {
+
+      return (
+        media.url ||
+        media.src ||
+        media.media_url ||
+        media.image_url ||
+        media.video_url ||
+        ''
+      )
+    }
+
+    return ''
+  }
+
+
+  // =====================================================
+  // VIDEO DETECTION
+  // =====================================================
+
+  const isVideoMedia = (
+    media
+  ) => {
+
+    if (
+      !media
+    ) {
+      return false
+    }
+
+    // ---------------------------------------------
+    // Check explicit media type fields
+    // ---------------------------------------------
+
+    if (
+      typeof media ===
+      'object'
+    ) {
+
+      const mediaType =
+        String(
+          media.type ||
+          media.media_type ||
+          media.file_type ||
+          media.mimeType ||
+          media.mime_type ||
+          ''
+        ).toLowerCase()
+
+      if (
+        mediaType.includes(
+          'video'
+        )
+      ) {
+        return true
+      }
+
+      if (
+        mediaType.includes(
+          'image'
+        )
+      ) {
+        return false
+      }
+    }
+
+
+    // ---------------------------------------------
+    // Check URL extension
+    // ---------------------------------------------
+
+    const url =
+      getMediaUrl(
+        media
+      )
+
+    const cleanUrl =
+      url
+        .split('?')[0]
+        .split('#')[0]
+        .toLowerCase()
+
+    const videoExtensions = [
+      '.mp4',
+      '.webm',
+      '.mov',
+      '.m4v',
+      '.avi',
+      '.mkv',
+      '.ogv',
+      '.3gp',
+      '.mpeg',
+      '.mpg'
+    ]
+
+    return videoExtensions.some(
+      (extension) =>
+        cleanUrl.endsWith(
+          extension
+        )
+    )
+  }
+
+
+  // =====================================================
   // OPEN PROFILE
   // =====================================================
 
@@ -470,7 +593,7 @@ const PostCard = ({
 
 
   // =====================================================
-  // NEXT IMAGE
+  // NEXT MEDIA
   // =====================================================
 
   const goToNextImage =
@@ -493,7 +616,7 @@ const PostCard = ({
 
 
   // =====================================================
-  // PREVIOUS IMAGE
+  // PREVIOUS MEDIA
   // =====================================================
 
   const goToPreviousImage =
@@ -1225,10 +1348,18 @@ const PostCard = ({
     getShareUsers()
 
 
+  // =====================================================
+  // TOTAL MEDIA
+  // =====================================================
+
   const totalImages =
     post.image_urls?.length ||
     0
 
+
+  // =====================================================
+  // SELECTED MEDIA
+  // =====================================================
 
   const selectedImage =
     post.image_urls?.[
@@ -1396,7 +1527,7 @@ const PostCard = ({
 
 
         {/* =============================================
-            IMAGE CAROUSEL
+            IMAGE / VIDEO CAROUSEL
         ============================================== */}
 
         {totalImages > 0 && (
@@ -1424,40 +1555,72 @@ const PostCard = ({
 
               {post.image_urls.map(
                 (
-                  img,
+                  media,
                   index
                 ) => {
 
-                  const imageUrl =
-                    typeof img ===
-                    'string'
-                      ? img
-                      : img?.url
+                  const mediaUrl =
+                    getMediaUrl(
+                      media
+                    )
 
-                  if (!imageUrl) {
+                  if (!mediaUrl) {
                     return null
                   }
+
+                  const isVideo =
+                    isVideoMedia(
+                      media
+                    )
 
                   return (
 
                     <div
-                      key={`${imageUrl}-${index}`}
-                      className='w-full min-w-full flex-shrink-0'
+                      key={`${mediaUrl}-${index}`}
+                      className='w-full min-w-full flex-shrink-0 bg-black flex items-center justify-center'
                     >
 
-                      <img
-                        src={
-                          imageUrl
-                        }
-                        className='w-full max-h-[500px] object-contain bg-black'
-                        alt={
-                          typeof img ===
-                          'object'
-                            ? img?.caption ||
-                              `Post image ${index + 1}`
-                            : `Post image ${index + 1}`
-                        }
-                      />
+                      {isVideo ? (
+
+                        <video
+                          src={
+                            mediaUrl
+                          }
+                          className='w-full max-h-[500px] object-contain bg-black'
+                          controls
+                          playsInline
+                          preload='metadata'
+                          onError={() => {
+                            console.error(
+                              'VIDEO LOAD ERROR:',
+                              mediaUrl
+                            )
+                          }}
+                        />
+
+                      ) : (
+
+                        <img
+                          src={
+                            mediaUrl
+                          }
+                          className='w-full max-h-[500px] object-contain bg-black'
+                          alt={
+                            typeof media ===
+                            'object'
+                              ? media?.caption ||
+                                `Post image ${index + 1}`
+                              : `Post image ${index + 1}`
+                          }
+                          onError={() => {
+                            console.error(
+                              'IMAGE LOAD ERROR:',
+                              mediaUrl
+                            )
+                          }}
+                        />
+
+                      )}
 
                     </div>
                   )
@@ -1477,7 +1640,7 @@ const PostCard = ({
                     goToPreviousImage
                   }
                   className='absolute left-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 hover:bg-black/70 text-white flex items-center justify-center transition'
-                  aria-label='Previous image'
+                  aria-label='Previous media'
                 >
 
                   <ChevronLeft className='w-5 h-5' />
@@ -1491,7 +1654,7 @@ const PostCard = ({
                     goToNextImage
                   }
                   className='absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/50 hover:bg-black/70 text-white flex items-center justify-center transition'
-                  aria-label='Next image'
+                  aria-label='Next media'
                 >
 
                   <ChevronRight className='w-5 h-5' />
@@ -1525,7 +1688,7 @@ const PostCard = ({
                           )
                         }
                         aria-label={
-                          `Go to image ${index + 1}`
+                          `Go to media ${index + 1}`
                         }
                         className={`w-1.5 h-1.5 rounded-full transition-all ${
                           currentImage ===
@@ -1541,6 +1704,7 @@ const PostCard = ({
                 </div>
 
               </>
+
             )}
 
           </div>
@@ -1548,7 +1712,7 @@ const PostCard = ({
 
 
         {/* =============================================
-            IMAGE CAPTION
+            IMAGE / VIDEO CAPTION
         ============================================== */}
 
         {selectedImage &&
@@ -1888,8 +2052,6 @@ const PostCard = ({
             ) : comments.length ? (
 
 
-              /* COMMENTS LIST */
-
               comments.map(
                 (
                   comment
@@ -1925,7 +2087,6 @@ const PostCard = ({
                       }
                       className='flex gap-2 items-start'
                     >
-
 
                       {comment.user?.profile_picture ? (
 
@@ -1992,7 +2153,8 @@ const PostCard = ({
 
                             <div className='text-[11px] text-gray-500'>
 
-                              @{
+                              @
+                              {
                                 commentUsername
                               }
 
@@ -2076,7 +2238,6 @@ const PostCard = ({
             }
           >
 
-
             {/* SHARE HEADER */}
 
             <div className='flex items-center justify-between px-5 py-4 border-b border-gray-200'>
@@ -2138,7 +2299,6 @@ const PostCard = ({
                         className='flex items-center justify-between gap-3 p-3 rounded-xl hover:bg-gray-50'
                       >
 
-
                         <button
                           type='button'
                           onClick={() =>
@@ -2185,7 +2345,8 @@ const PostCard = ({
 
                             <p className='text-xs text-gray-500 truncate'>
 
-                              @{
+                              @
+                              {
                                 user.username ||
                                 'user'
                               }

@@ -14,7 +14,8 @@ import toast from 'react-hot-toast'
 
 const Connections = () => {
 
-  const [currentTab, setCurrentTab] = useState('Followers')
+  const [currentTab, setCurrentTab] =
+    useState('Followers')
 
   const navigate = useNavigate()
   const dispatch = useDispatch()
@@ -24,31 +25,116 @@ const Connections = () => {
     pendingConnections = [],
     followers = [],
     following = []
-  } = useSelector((state) => state.connections)
+  } = useSelector(
+    (state) => state.connections
+  )
+
+  // =====================================================
+  // GET TOKEN
+  // =====================================================
 
   const getToken = async () => {
     return localStorage.getItem('token')
   }
 
+  // =====================================================
+  // CHECK MONGODB OBJECT ID
+  // =====================================================
+
+  const isValidMongoId = (id) => {
+
+    if (!id) {
+      return false
+    }
+
+    return /^[0-9a-fA-F]{24}$/.test(
+      String(id)
+    )
+  }
+
+  // =====================================================
+  // OPEN USER PROFILE
+  // =====================================================
+
+  const openUserProfile = (user) => {
+
+    const mongoUserId =
+      user?._id
+
+    console.log(
+      'OPENING USER PROFILE:',
+      user
+    )
+
+    console.log(
+      'PROFILE ID:',
+      mongoUserId
+    )
+
+    // ---------------------------------------------------
+    // PREVENT CLERK ID
+    // ---------------------------------------------------
+
+    if (
+      !mongoUserId ||
+      !isValidMongoId(mongoUserId)
+    ) {
+
+      console.error(
+        'INVALID MONGODB USER ID:',
+        mongoUserId
+      )
+
+      toast.error(
+        'This user has an invalid profile ID. Please refresh your connections.'
+      )
+
+      return
+    }
+
+    navigate(
+      `/profile/${mongoUserId}`
+    )
+  }
+
+  // =====================================================
+  // DATA ARRAY
+  // =====================================================
+
   const dataArray = [
     {
       label: 'Followers',
-      value: followers,
+      value: Array.isArray(followers)
+        ? followers
+        : [],
       icon: Users
     },
+
     {
       label: 'Following',
-      value: following,
+      value: Array.isArray(following)
+        ? following
+        : [],
       icon: UserCheck
     },
+
     {
       label: 'Pending',
-      value: pendingConnections,
+      value: Array.isArray(
+        pendingConnections
+      )
+        ? pendingConnections
+        : [],
       icon: UserRoundPen
     },
+
     {
       label: 'Connections',
-      value: connections,
+      value: Array.isArray(
+        connections
+      )
+        ? connections
+        : [],
       icon: UserPlus
     }
   ]
@@ -58,10 +144,32 @@ const Connections = () => {
   // =====================================================
 
   const refreshConnections = async () => {
-    const token = await getToken()
 
-    if (token) {
-      dispatch(fetchConnections(token))
+    try {
+
+      const token =
+        await getToken()
+
+      if (!token) {
+
+        toast.error(
+          'Please login again'
+        )
+
+        return
+      }
+
+      dispatch(
+        fetchConnections(token)
+      )
+
+    } catch (error) {
+
+      console.error(
+        'REFRESH CONNECTIONS ERROR:',
+        error
+      )
+
     }
   }
 
@@ -69,38 +177,78 @@ const Connections = () => {
   // UNFOLLOW USER
   // =====================================================
 
-  const handleUnfollow = async (userId) => {
+  const handleUnfollow = async (
+    userId
+  ) => {
+
     try {
 
-      const token = await getToken()
+      const token =
+        await getToken()
 
-      const { data } = await api.post(
-        '/api/user/unfollow',
-        {
+      if (!token) {
+
+        toast.error(
+          'Please login again'
+        )
+
+        return
+      }
+
+      if (
+        !isValidMongoId(userId)
+      ) {
+
+        toast.error(
+          'Invalid user ID'
+        )
+
+        console.error(
+          'INVALID UNFOLLOW USER ID:',
           userId
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
+        )
+
+        return
+      }
+
+      const { data } =
+        await api.post(
+          '/api/user/unfollow',
+          {
+            userId
+          },
+          {
+            headers: {
+              Authorization:
+                `Bearer ${token}`
+            }
           }
-        }
-      )
+        )
 
       if (data.success) {
 
-        toast.success(data.message)
+        toast.success(
+          data.message
+        )
 
-        dispatch(fetchConnections(token))
+        dispatch(
+          fetchConnections(token)
+        )
 
       } else {
 
-        toast.error(data.message)
-
+        toast.error(
+          data.message ||
+          'Failed to unfollow user'
+        )
       }
 
     } catch (error) {
 
-      console.log('UNFOLLOW ERROR:', error)
+      console.error(
+        'UNFOLLOW ERROR:',
+        error
+      )
 
       toast.error(
         error.response?.data?.message ||
@@ -114,46 +262,85 @@ const Connections = () => {
   // ACCEPT CONNECTION
   // =====================================================
 
-  const acceptConnection = async (userId) => {
-    try {
+  const acceptConnection =
+    async (userId) => {
 
-      const token = await getToken()
+      try {
 
-      const { data } = await api.post(
-        '/api/user/accept',
-        {
-          userId
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
+        const token =
+          await getToken()
+
+        if (!token) {
+
+          toast.error(
+            'Please login again'
+          )
+
+          return
         }
-      )
 
-      if (data.success) {
+        if (
+          !isValidMongoId(userId)
+        ) {
 
-        toast.success(data.message)
+          toast.error(
+            'Invalid user ID'
+          )
 
-        dispatch(fetchConnections(token))
+          console.error(
+            'INVALID ACCEPT USER ID:',
+            userId
+          )
 
-      } else {
+          return
+        }
 
-        toast.error(data.message)
+        const { data } =
+          await api.post(
+            '/api/user/accept',
+            {
+              userId
+            },
+            {
+              headers: {
+                Authorization:
+                  `Bearer ${token}`
+              }
+            }
+          )
 
+        if (data.success) {
+
+          toast.success(
+            data.message
+          )
+
+          dispatch(
+            fetchConnections(token)
+          )
+
+        } else {
+
+          toast.error(
+            data.message ||
+            'Failed to accept connection'
+          )
+        }
+
+      } catch (error) {
+
+        console.error(
+          'ACCEPT CONNECTION ERROR:',
+          error
+        )
+
+        toast.error(
+          error.response?.data?.message ||
+          error.message ||
+          'Failed to accept connection'
+        )
       }
-
-    } catch (error) {
-
-      console.log('ACCEPT CONNECTION ERROR:', error)
-
-      toast.error(
-        error.response?.data?.message ||
-        error.message ||
-        'Failed to accept connection'
-      )
     }
-  }
 
   // =====================================================
   // FETCH CONNECTIONS
@@ -171,8 +358,13 @@ const Connections = () => {
 
   const currentData =
     dataArray.find(
-      (item) => item.label === currentTab
+      (item) =>
+        item.label === currentTab
     )?.value || []
+
+  // =====================================================
+  // RENDER
+  // =====================================================
 
   return (
 
@@ -250,7 +442,12 @@ const Connections = () => {
 
               <button
                 key={tab.label}
-                onClick={() => setCurrentTab(tab.label)}
+                type="button"
+                onClick={() =>
+                  setCurrentTab(
+                    tab.label
+                  )
+                }
                 className={`
                   cursor-pointer
                   flex
@@ -261,7 +458,8 @@ const Connections = () => {
                   rounded-md
                   transition-colors
                   ${
-                    currentTab === tab.label
+                    currentTab ===
+                    tab.label
                       ? 'bg-indigo-50 font-medium text-indigo-600'
                       : 'text-gray-500 hover:text-black'
                   }
@@ -300,16 +498,20 @@ const Connections = () => {
 
               <p className="text-gray-500">
 
-                {currentTab === 'Followers' &&
+                {currentTab ===
+                  'Followers' &&
                   'You have no followers yet.'}
 
-                {currentTab === 'Following' &&
+                {currentTab ===
+                  'Following' &&
                   'You are not following anyone yet.'}
 
-                {currentTab === 'Pending' &&
+                {currentTab ===
+                  'Pending' &&
                   'You have no pending connection requests.'}
 
-                {currentTab === 'Connections' &&
+                {currentTab ===
+                  'Connections' &&
                   'You have no connections yet.'}
 
               </p>
@@ -318,146 +520,240 @@ const Connections = () => {
 
           ) : (
 
-            currentData.map((user) => (
+            currentData.map(
+              (user) => {
 
-              <div
-                key={user._id}
-                className="w-full max-w-md flex gap-5 p-6 bg-white shadow rounded-md"
-              >
+                const userId =
+                  user?._id
 
-                {/* PROFILE IMAGE */}
+                const validUserId =
+                  isValidMongoId(
+                    userId
+                  )
 
-                <div className="flex-shrink-0">
+                const displayName =
+                  user?.full_name ||
+                  user?.username ||
+                  'User'
 
-                  {user.profile_picture ? (
+                const username =
+                  user?.username ||
+                  'user'
 
-                    <img
-                      src={user.profile_picture}
-                      alt={user.full_name || 'User'}
-                      className="rounded-full w-12 h-12 shadow-md object-cover"
-                    />
+                return (
 
-                  ) : (
+                  <div
+                    key={
+                      userId ||
+                      Math.random()
+                    }
+                    className="w-full max-w-md flex gap-5 p-6 bg-white shadow rounded-md"
+                  >
 
-                    <div className="rounded-full w-12 h-12 shadow-md bg-indigo-100 text-indigo-600 flex items-center justify-center font-semibold text-lg">
+                    {/* =================================================
+                        PROFILE IMAGE
+                    ================================================= */}
 
-                      {(user.full_name ||
-                        user.username ||
-                        'U')
-                        .charAt(0)
-                        .toUpperCase()}
+                    <div className="flex-shrink-0">
+
+                      {user?.profile_picture ? (
+
+                        <img
+                          src={
+                            user.profile_picture
+                          }
+                          alt={
+                            displayName
+                          }
+                          className="rounded-full w-12 h-12 shadow-md object-cover"
+                        />
+
+                      ) : (
+
+                        <div className="rounded-full w-12 h-12 shadow-md bg-indigo-100 text-indigo-600 flex items-center justify-center font-semibold text-lg">
+
+                          {displayName
+                            .charAt(0)
+                            .toUpperCase()}
+
+                        </div>
+
+                      )}
 
                     </div>
 
-                  )}
 
-                </div>
+                    {/* =================================================
+                        USER INFORMATION
+                    ================================================= */}
 
+                    <div className="flex-1 min-w-0">
 
-                {/* USER INFORMATION */}
+                      <p className="font-medium text-slate-700 truncate">
 
-                <div className="flex-1 min-w-0">
+                        {displayName}
 
-                  <p className="font-medium text-slate-700 truncate">
-                    {user.full_name ||
-                      user.username ||
-                      'User'}
-                  </p>
+                      </p>
 
-                  <p className="text-slate-500 truncate">
-                    @{user.username || 'user'}
-                  </p>
+                      <p className="text-slate-500 truncate">
 
-                  <p className="text-sm text-gray-600 mt-1">
+                        @{username}
 
-                    {(user.bio || '').slice(0, 30)}
+                      </p>
 
-                    {user.bio &&
-                    user.bio.length > 30
-                      ? '...'
-                      : ''}
+                      <p className="text-sm text-gray-600 mt-1">
 
-                  </p>
+                        {(user?.bio || '')
+                          .slice(0, 30)}
 
+                        {user?.bio &&
+                        user.bio.length > 30
+                          ? '...'
+                          : ''}
 
-                  {/* BUTTONS */}
-
-                  <div className="flex max-sm:flex-col gap-2 mt-4">
-
-                    {/* VIEW PROFILE */}
-
-                    <button
-                      onClick={() =>
-                        navigate(
-                          `/profile/${user._id}`
-                        )
-                      }
-                      className="w-full p-2 text-sm rounded bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 active:scale-95 transition text-white cursor-pointer"
-                    >
-                      View Profile
-                    </button>
+                      </p>
 
 
-                    {/* UNFOLLOW */}
+                      {/* =================================================
+                          BUTTONS
+                      ================================================= */}
 
-                    {currentTab === 'Following' && (
+                      <div className="flex max-sm:flex-col gap-2 mt-4">
 
-                      <button
-                        onClick={() =>
-                          handleUnfollow(user._id)
-                        }
-                        className="w-full p-2 text-sm rounded bg-slate-100 hover:bg-slate-200 text-black active:scale-95 transition cursor-pointer"
-                      >
-                        Unfollow
-                      </button>
+                        {/* VIEW PROFILE */}
 
-                    )}
+                        <button
+                          type="button"
+                          disabled={
+                            !validUserId
+                          }
+                          onClick={() =>
+                            openUserProfile(
+                              user
+                            )
+                          }
+                          className={`w-full p-2 text-sm rounded bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 active:scale-95 transition text-white ${
+                            !validUserId
+                              ? 'opacity-50 cursor-not-allowed'
+                              : 'cursor-pointer'
+                          }`}
+                        >
 
+                          View Profile
 
-                    {/* ACCEPT */}
-
-                    {currentTab === 'Pending' && (
-
-                      <button
-                        onClick={() =>
-                          acceptConnection(user._id)
-                        }
-                        className="w-full p-2 text-sm rounded bg-slate-100 hover:bg-slate-200 text-black active:scale-95 transition cursor-pointer"
-                      >
-                        Accept
-                      </button>
-
-                    )}
+                        </button>
 
 
-                    {/* MESSAGE */}
+                        {/* UNFOLLOW */}
 
-                    {currentTab === 'Connections' && (
+                        {currentTab ===
+                          'Following' && (
 
-                      <button
-                        onClick={() =>
-                          navigate(
-                            `/messages/${user._id}`
-                          )
-                        }
-                        className="w-full p-2 text-sm rounded bg-slate-100 hover:bg-slate-200 text-slate-800 active:scale-95 transition cursor-pointer flex items-center justify-center gap-1"
-                      >
+                          <button
+                            type="button"
+                            disabled={
+                              !validUserId
+                            }
+                            onClick={() =>
+                              handleUnfollow(
+                                userId
+                              )
+                            }
+                            className={`w-full p-2 text-sm rounded bg-slate-100 hover:bg-slate-200 text-black active:scale-95 transition ${
+                              !validUserId
+                                ? 'opacity-50 cursor-not-allowed'
+                                : 'cursor-pointer'
+                            }`}
+                          >
 
-                        <MessageSquare className="w-4 h-4" />
+                            Unfollow
 
-                        Message
+                          </button>
 
-                      </button>
+                        )}
 
-                    )}
+
+                        {/* ACCEPT */}
+
+                        {currentTab ===
+                          'Pending' && (
+
+                          <button
+                            type="button"
+                            disabled={
+                              !validUserId
+                            }
+                            onClick={() =>
+                              acceptConnection(
+                                userId
+                              )
+                            }
+                            className={`w-full p-2 text-sm rounded bg-slate-100 hover:bg-slate-200 text-black active:scale-95 transition ${
+                              !validUserId
+                                ? 'opacity-50 cursor-not-allowed'
+                                : 'cursor-pointer'
+                            }`}
+                          >
+
+                            Accept
+
+                          </button>
+
+                        )}
+
+
+                        {/* MESSAGE */}
+
+                        {currentTab ===
+                          'Connections' && (
+
+                          <button
+                            type="button"
+                            disabled={
+                              !validUserId
+                            }
+                            onClick={() => {
+
+                              if (
+                                !validUserId
+                              ) {
+
+                                toast.error(
+                                  'Invalid user ID'
+                                )
+
+                                return
+                              }
+
+                              navigate(
+                                `/messages/${userId}`
+                              )
+
+                            }}
+                            className={`w-full p-2 text-sm rounded bg-slate-100 hover:bg-slate-200 text-slate-800 active:scale-95 transition flex items-center justify-center gap-1 ${
+                              !validUserId
+                                ? 'opacity-50 cursor-not-allowed'
+                                : 'cursor-pointer'
+                            }`}
+                          >
+
+                            <MessageSquare className="w-4 h-4" />
+
+                            Message
+
+                          </button>
+
+                        )}
+
+                      </div>
+
+                    </div>
 
                   </div>
 
-                </div>
-
-              </div>
-
-            ))
+                )
+              }
+            )
 
           )}
 

@@ -25,6 +25,9 @@ const ai = new GoogleGenAI({
 const GEMINI_MODEL =
     process.env.GEMINI_MODEL || "gemini-3.7-flash";
 
+const GEMINI_QUOTA_MESSAGE =
+    "Gemini API quota has been exceeded. Please check your Gemini API quota or billing plan and try again later.";
+
 
 // =====================================================
 // CREATE POST
@@ -53,10 +56,9 @@ export const addPost = async (req, res) => {
 
         if (req.body.captions) {
             try {
-                captions =
-                    JSON.parse(
-                        req.body.captions
-                    );
+                captions = JSON.parse(
+                    req.body.captions
+                );
 
                 if (!Array.isArray(captions)) {
                     captions = [];
@@ -200,9 +202,18 @@ export const generateAICaptions = async (
     let temporaryFilePath = null;
 
     try {
+        console.log(
+            "========== AI CAPTION REQUEST =========="
+        );
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
+
+        console.log(
+            "AI CAPTION USER:",
+            userId
+        );
 
         if (!userId) {
             return res.status(401).json({
@@ -220,9 +231,7 @@ export const generateAICaptions = async (
             });
         }
 
-        if (
-            !process.env.GEMINI_API_KEY
-        ) {
+        if (!process.env.GEMINI_API_KEY) {
             return res.status(500).json({
                 success: false,
                 message:
@@ -230,14 +239,32 @@ export const generateAICaptions = async (
             });
         }
 
-        const file =
-            req.file;
+        const file = req.file;
+
+        console.log(
+            "AI MEDIA:",
+            {
+                name:
+                    file.originalname,
+
+                type:
+                    file.mimetype,
+
+                size:
+                    `${(
+                        file.size /
+                        1024 /
+                        1024
+                    ).toFixed(2)} MB`
+            }
+        );
 
         const allowedTypes = [
             "image/jpeg",
             "image/png",
             "image/webp",
             "image/gif",
+
             "video/mp4",
             "video/mpeg",
             "video/quicktime",
@@ -256,10 +283,18 @@ export const generateAICaptions = async (
             });
         }
 
-        if (
+        const isVideo =
             file.mimetype.startsWith(
                 "video/"
-            ) &&
+            );
+
+
+        // =================================================
+        // VIDEO SIZE LIMIT
+        // =================================================
+
+        if (
+            isVideo &&
             file.size >
                 20 * 1024 * 1024
         ) {
@@ -269,6 +304,28 @@ export const generateAICaptions = async (
                     "Video must be smaller than 20MB for AI captions"
             });
         }
+
+
+        // =================================================
+        // IMAGE SIZE LIMIT
+        // =================================================
+
+        if (
+            !isVideo &&
+            file.size >
+                10 * 1024 * 1024
+        ) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Image must be smaller than 10MB for AI captions"
+            });
+        }
+
+
+        // =================================================
+        // AI PROMPT
+        // =================================================
 
         const prompt = `
 Analyze this image or video and create exactly 5 different social media caption suggestions for PingUp.
@@ -286,12 +343,17 @@ Requirements:
 
         let response;
 
-        // IMAGE
-        if (
-            file.mimetype.startsWith(
-                "image/"
-            )
-        ) {
+
+        // =================================================
+        // IMAGE AI CAPTION
+        // =================================================
+
+        if (!isVideo) {
+
+            console.log(
+                "AI CAPTION: processing image..."
+            );
+
             const base64Data =
                 file.buffer.toString(
                     "base64"
@@ -332,6 +394,22 @@ Requirements:
                                 responseMimeType:
                                     "application/json",
 
+                                responseSchema: {
+                                    type:
+                                        "array",
+
+                                    minItems:
+                                        5,
+
+                                    maxItems:
+                                        5,
+
+                                    items: {
+                                        type:
+                                            "string"
+                                    }
+                                },
+
                                 thinkingConfig: {
                                     thinkingLevel:
                                         "low"
@@ -340,9 +418,21 @@ Requirements:
                         })
                 );
 
+            console.log(
+                "AI CAPTION: image response received"
+            );
+
         } else {
 
-            // VIDEO
+
+            // =================================================
+            // VIDEO AI CAPTION
+            // =================================================
+
+            console.log(
+                "AI CAPTION: preparing video..."
+            );
+
             const safeFileName =
                 `${Date.now()}-${file.originalname
                     .replace(
@@ -361,19 +451,43 @@ Requirements:
                 file.buffer
             );
 
+            console.log(
+                "AI CAPTION: uploading video to Gemini..."
+            );
+
             let videoFile =
-                await ai.files.upload({
-                    file:
-                        temporaryFilePath,
+                await withTimeout(
+                    ai.files.upload({
+                        file:
+                            temporaryFilePath,
 
-                    config: {
-                        mimeType:
-                            file.mimetype
-                    }
-                });
+                        config: {
+                            mimeType:
+                                file.mimetype
+                        }
+                    }),
 
-            let attempts = 0;
-            const maxAttempts = 60;
+                    30000,
+
+                    "Video upload to Gemini timed out"
+                );
+
+            console.log(
+                "AI CAPTION: video uploaded:",
+                videoFile?.name
+            );
+
+
+            // =================================================
+            // WAIT FOR VIDEO PROCESSING
+            // Maximum 30 seconds
+            // =================================================
+
+            const processingStart =
+                Date.now();
+
+            const maximumProcessingTime =
+                30000;
 
             while (
                 videoFile &&
@@ -383,10 +497,16 @@ Requirements:
                     .toUpperCase() !==
                     "ACTIVE"
             ) {
+
                 const currentState =
                     videoFile.state
                         .toString()
                         .toUpperCase();
+
+                console.log(
+                    "AI VIDEO STATE:",
+                    currentState
+                );
 
                 if (
                     currentState ===
@@ -397,25 +517,41 @@ Requirements:
                     );
                 }
 
-                attempts++;
-
                 if (
-                    attempts >
-                    maxAttempts
+                    Date.now() -
+                        processingStart >
+                    maximumProcessingTime
                 ) {
                     throw new Error(
-                        "Video processing took too long"
+                        "Video processing is taking too long. Please try a shorter video."
                     );
                 }
 
-                await sleep(3000);
+                await sleep(
+                    2000
+                );
 
                 videoFile =
-                    await ai.files.get({
-                        name:
-                            videoFile.name
-                    });
+                    await withTimeout(
+                        ai.files.get({
+                            name:
+                                videoFile.name
+                        }),
+
+                        8000,
+
+                        "Checking video processing timed out"
+                    );
             }
+
+            console.log(
+                "AI CAPTION: video is ACTIVE"
+            );
+
+
+            // =================================================
+            // GENERATE VIDEO CAPTIONS
+            // =================================================
 
             response =
                 await generateWithRetry(
@@ -438,6 +574,22 @@ Requirements:
                                 responseMimeType:
                                     "application/json",
 
+                                responseSchema: {
+                                    type:
+                                        "array",
+
+                                    minItems:
+                                        5,
+
+                                    maxItems:
+                                        5,
+
+                                    items: {
+                                        type:
+                                            "string"
+                                    }
+                                },
+
                                 thinkingConfig: {
                                     thinkingLevel:
                                         "low"
@@ -445,18 +597,37 @@ Requirements:
                             }
                         })
                 );
+
+            console.log(
+                "AI CAPTION: video response received"
+            );
         }
+
+
+        // =================================================
+        // EXTRACT GEMINI RESPONSE
+        // =================================================
 
         const text =
             getGeminiText(
                 response
             );
 
+        console.log(
+            "AI CAPTION RAW RESPONSE:",
+            text
+        );
+
         if (!text) {
             throw new Error(
                 "AI did not return any captions"
             );
         }
+
+
+        // =================================================
+        // PARSE CAPTIONS
+        // =================================================
 
         let captions = [];
 
@@ -500,6 +671,7 @@ Requirements:
                     .slice(0, 5);
         }
 
+
         if (
             !Array.isArray(
                 captions
@@ -509,6 +681,7 @@ Requirements:
                 "Invalid caption response from AI"
             );
         }
+
 
         captions =
             captions
@@ -524,6 +697,7 @@ Requirements:
                 )
                 .slice(0, 5);
 
+
         if (
             captions.length === 0
         ) {
@@ -532,14 +706,49 @@ Requirements:
             );
         }
 
+
+        if (
+            captions.length < 5
+        ) {
+            console.warn(
+                `AI returned only ${captions.length} captions`
+            );
+        }
+
+
+        console.log(
+            "AI CAPTION SUCCESS:",
+            captions
+        );
+
         return res.status(200).json({
             success: true,
             captions
         });
 
     } catch (error) {
+
         console.error(
-            "AI CAPTION ERROR:",
+            "========== AI CAPTION ERROR =========="
+        );
+
+        console.error(
+            "Message:",
+            error?.message
+        );
+
+        console.error(
+            "Status:",
+            error?.status
+        );
+
+        console.error(
+            "Status Code:",
+            error?.statusCode
+        );
+
+        console.error(
+            "Full Error:",
             error
         );
 
@@ -547,18 +756,33 @@ Requirements:
             Number(
                 error?.status ||
                 error?.statusCode ||
-                error?.response?.status
+                error?.response?.status ||
+                0
             );
 
-        if (status === 429) {
-            return res.status(503).json({
+
+        // =================================================
+        // GEMINI QUOTA EXCEEDED
+        // =================================================
+
+        if (
+            status === 429
+        ) {
+            return res.status(429).json({
                 success: false,
                 message:
-                    "Gemini AI is handling many requests right now. Please try again shortly."
+                    GEMINI_QUOTA_MESSAGE
             });
         }
 
-        if (status === 503) {
+
+        // =================================================
+        // GEMINI TEMPORARILY UNAVAILABLE
+        // =================================================
+
+        if (
+            status === 503
+        ) {
             return res.status(503).json({
                 success: false,
                 message:
@@ -566,13 +790,25 @@ Requirements:
             });
         }
 
-        if (status === 404) {
+
+        // =================================================
+        // MODEL NOT FOUND
+        // =================================================
+
+        if (
+            status === 404
+        ) {
             return res.status(404).json({
                 success: false,
                 message:
                     `Gemini model "${GEMINI_MODEL}" is unavailable.`
             });
         }
+
+
+        // =================================================
+        // AUTHENTICATION ERROR
+        // =================================================
 
         if (
             status === 401 ||
@@ -585,6 +821,25 @@ Requirements:
             });
         }
 
+
+        // =================================================
+        // TIMEOUT
+        // =================================================
+
+        if (
+            status === 408 ||
+            error?.message
+                ?.toLowerCase()
+                .includes("timed out")
+        ) {
+            return res.status(408).json({
+                success: false,
+                message:
+                    error.message
+            });
+        }
+
+
         return res.status(500).json({
             success: false,
             message:
@@ -593,11 +848,19 @@ Requirements:
         });
 
     } finally {
-        if (temporaryFilePath) {
+
+        if (
+            temporaryFilePath
+        ) {
             try {
                 await fs.unlink(
                     temporaryFilePath
                 );
+
+                console.log(
+                    "Temporary AI video file deleted"
+                );
+
             } catch {}
         }
     }
@@ -613,6 +876,7 @@ export const generateAIPersonality = async (
     res
 ) => {
     try {
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
@@ -812,6 +1076,7 @@ Rules:
         });
 
     } catch (error) {
+
         console.error(
             "AI PERSONALITY ERROR:",
             error
@@ -821,17 +1086,48 @@ Rules:
             Number(
                 error?.status ||
                 error?.statusCode ||
-                error?.response?.status
+                error?.response?.status ||
+                0
             );
 
         if (
-            status === 429 ||
+            status === 429
+        ) {
+            return res.status(429).json({
+                success: false,
+                message:
+                    GEMINI_QUOTA_MESSAGE
+            });
+        }
+
+        if (
             status === 503
         ) {
             return res.status(503).json({
                 success: false,
                 message:
-                    "AI is temporarily busy. Please try again shortly."
+                    "Gemini AI is temporarily unavailable. Please try again shortly."
+            });
+        }
+
+        if (
+            status === 404
+        ) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    `Gemini model "${GEMINI_MODEL}" is unavailable.`
+            });
+        }
+
+        if (
+            status === 401 ||
+            status === 403
+        ) {
+            return res.status(status).json({
+                success: false,
+                message:
+                    "Gemini API authentication failed. Check your GEMINI_API_KEY."
             });
         }
 
@@ -854,6 +1150,7 @@ export const generateAIPrediction = async (
     res
 ) => {
     try {
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
@@ -1068,6 +1365,7 @@ Rules:
         });
 
     } catch (error) {
+
         console.error(
             "AI PREDICTION ERROR:",
             error
@@ -1077,17 +1375,48 @@ Rules:
             Number(
                 error?.status ||
                 error?.statusCode ||
-                error?.response?.status
+                error?.response?.status ||
+                0
             );
 
         if (
-            status === 429 ||
+            status === 429
+        ) {
+            return res.status(429).json({
+                success: false,
+                message:
+                    GEMINI_QUOTA_MESSAGE
+            });
+        }
+
+        if (
             status === 503
         ) {
             return res.status(503).json({
                 success: false,
                 message:
-                    "AI is temporarily busy. Please try again shortly."
+                    "Gemini AI is temporarily unavailable. Please try again shortly."
+            });
+        }
+
+        if (
+            status === 404
+        ) {
+            return res.status(404).json({
+                success: false,
+                message:
+                    `Gemini model "${GEMINI_MODEL}" is unavailable.`
+            });
+        }
+
+        if (
+            status === 401 ||
+            status === 403
+        ) {
+            return res.status(status).json({
+                success: false,
+                message:
+                    "Gemini API authentication failed. Check your GEMINI_API_KEY."
             });
         }
 
@@ -1109,11 +1438,13 @@ export const generateAIChat = async (
     req,
     res
 ) => {
+
     console.log(
         "========== AI CHAT CONTROLLER CALLED =========="
     );
 
     try {
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
@@ -1377,6 +1708,7 @@ IMPORTANT RULES:
         });
 
     } catch (error) {
+
         console.error(
             "========== AI CHAT ERROR =========="
         );
@@ -1405,18 +1737,23 @@ IMPORTANT RULES:
             Number(
                 error?.status ||
                 error?.statusCode ||
-                error?.response?.status
+                error?.response?.status ||
+                0
             );
 
-        if (status === 429) {
-            return res.status(503).json({
+        if (
+            status === 429
+        ) {
+            return res.status(429).json({
                 success: false,
                 message:
-                    "PingUp AI is handling many requests right now. Please try again shortly."
+                    GEMINI_QUOTA_MESSAGE
             });
         }
 
-        if (status === 503) {
+        if (
+            status === 503
+        ) {
             return res.status(503).json({
                 success: false,
                 message:
@@ -1424,7 +1761,9 @@ IMPORTANT RULES:
             });
         }
 
-        if (status === 404) {
+        if (
+            status === 404
+        ) {
             return res.status(404).json({
                 success: false,
                 message:
@@ -1440,6 +1779,19 @@ IMPORTANT RULES:
                 success: false,
                 message:
                     "Gemini API authentication failed. Please check your GEMINI_API_KEY."
+            });
+        }
+
+        if (
+            status === 408 ||
+            error?.message
+                ?.toLowerCase()
+                .includes("timed out")
+        ) {
+            return res.status(408).json({
+                success: false,
+                message:
+                    error.message
             });
         }
 
@@ -1462,6 +1814,7 @@ export const generateAIInsights = async (
     res
 ) => {
     try {
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
@@ -1680,6 +2033,7 @@ Rules:
         });
 
     } catch (error) {
+
         console.error(
             "AI PROFILE INSIGHTS ERROR:",
             error
@@ -1689,21 +2043,33 @@ Rules:
             Number(
                 error?.status ||
                 error?.statusCode ||
-                error?.response?.status
+                error?.response?.status ||
+                0
             );
 
         if (
-            status === 429 ||
+            status === 429
+        ) {
+            return res.status(429).json({
+                success: false,
+                message:
+                    GEMINI_QUOTA_MESSAGE
+            });
+        }
+
+        if (
             status === 503
         ) {
             return res.status(503).json({
                 success: false,
                 message:
-                    "AI is temporarily busy. Please try again shortly."
+                    "Gemini AI is temporarily unavailable. Please try again shortly."
             });
         }
 
-        if (status === 404) {
+        if (
+            status === 404
+        ) {
             return res.status(404).json({
                 success: false,
                 message:
@@ -1739,7 +2105,9 @@ Rules:
 const getGeminiText = (
     response
 ) => {
+
     try {
+
         if (
             response &&
             typeof response.text ===
@@ -1753,6 +2121,7 @@ const getGeminiText = (
             typeof response.text ===
                 "function"
         ) {
+
             const text =
                 response.text();
 
@@ -1767,6 +2136,7 @@ const getGeminiText = (
         if (
             response?.candidates?.length
         ) {
+
             const parts =
                 response
                     .candidates[0]
@@ -1791,6 +2161,7 @@ const getGeminiText = (
         return "";
 
     } catch (error) {
+
         console.error(
             "GEMINI TEXT EXTRACTION ERROR:",
             error
@@ -1808,22 +2179,33 @@ const getGeminiText = (
 const generateWithRetry = async (
     generateFunction
 ) => {
+
     let lastError = null;
 
-    const maxAttempts = 10;
+    // =================================================
+    // ONLY 2 ATTEMPTS
+    // =================================================
+
+    const maxAttempts = 2;
 
     for (
         let attempt = 1;
         attempt <= maxAttempts;
         attempt++
     ) {
+
         try {
+
             console.log(
                 `GEMINI REQUEST ATTEMPT ${attempt}/${maxAttempts}`
             );
 
             const response =
-                await generateFunction();
+                await withTimeout(
+                    generateFunction(),
+                    30000,
+                    "Gemini AI request timed out. Please try again."
+                );
 
             console.log(
                 "GEMINI REQUEST SUCCESS"
@@ -1832,13 +2214,15 @@ const generateWithRetry = async (
             return response;
 
         } catch (error) {
+
             lastError = error;
 
             const status =
                 Number(
                     error?.status ||
                     error?.statusCode ||
-                    error?.response?.status
+                    error?.response?.status ||
+                    0
                 );
 
             console.error(
@@ -1855,53 +2239,75 @@ const generateWithRetry = async (
                 error?.message
             );
 
+
+            // =================================================
+            // IMPORTANT
+            // 429 = QUOTA EXCEEDED
+            //
+            // Do NOT wait and retry quota errors.
+            // =================================================
+
             if (
-                status !== 429 &&
-                status !== 503 &&
-                status !== 500
+                status === 429
+            ) {
+                console.error(
+                    "GEMINI QUOTA EXCEEDED - STOPPING WITHOUT RETRY"
+                );
+
+                throw error;
+            }
+
+
+            // =================================================
+            // DO NOT RETRY AUTH / INVALID REQUEST / MODEL
+            // =================================================
+
+            if (
+                status === 400 ||
+                status === 401 ||
+                status === 403 ||
+                status === 404
             ) {
                 throw error;
             }
+
+
+            // =================================================
+            // ONLY RETRY TEMPORARY SERVER ERRORS
+            // =================================================
+
+            const temporaryError =
+                status === 500 ||
+                status === 502 ||
+                status === 503 ||
+                status === 504 ||
+                status === 408 ||
+                error?.message
+                    ?.toLowerCase()
+                    .includes("timed out");
+
+
+            if (
+                !temporaryError
+            ) {
+                throw error;
+            }
+
 
             if (
                 attempt >=
                 maxAttempts
             ) {
-                console.error(
-                    "GEMINI MAX RETRIES REACHED"
-                );
-
                 break;
             }
 
-            const exponentialDelay =
-                Math.min(
-                    30000,
-                    3000 *
-                    Math.pow(
-                        2,
-                        attempt - 1
-                    )
-                );
-
-            const randomDelay =
-                Math.floor(
-                    Math.random() *
-                    2000
-                );
-
-            const retryDelay =
-                exponentialDelay +
-                randomDelay;
 
             console.log(
-                `GEMINI TEMPORARY ERROR. RETRYING IN ${Math.ceil(
-                    retryDelay / 1000
-                )} SECONDS...`
+                "Retrying Gemini request in 1.5 seconds..."
             );
 
             await sleep(
-                retryDelay
+                1500
             );
         }
     }
@@ -1909,8 +2315,59 @@ const generateWithRetry = async (
     throw (
         lastError ||
         new Error(
-            "Gemini request failed after multiple attempts"
+            "Gemini AI request failed"
         )
+    );
+};
+
+
+// =====================================================
+// TIMEOUT HELPER
+// =====================================================
+
+const withTimeout = (
+    promise,
+    milliseconds,
+    message
+) => {
+
+    let timeoutId;
+
+    const timeoutPromise =
+        new Promise(
+            (_, reject) => {
+
+                timeoutId =
+                    setTimeout(
+                        () => {
+
+                            const error =
+                                new Error(
+                                    message
+                                );
+
+                            error.status =
+                                408;
+
+                            reject(
+                                error
+                            );
+
+                        },
+                        milliseconds
+                    );
+            }
+        );
+
+    return Promise.race([
+        promise,
+        timeoutPromise
+    ]).finally(
+        () => {
+            clearTimeout(
+                timeoutId
+            );
+        }
     );
 };
 
@@ -1939,7 +2396,9 @@ export const getFeedPosts = async (
     req,
     res
 ) => {
+
     try {
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
@@ -1990,15 +2449,13 @@ export const getFeedPosts = async (
 
         users.forEach(
             user => {
+
                 userMap[
                     user._id.toString()
                 ] = user;
+
             }
         );
-
-        // =================================================
-        // FORMAT POSTS + REACTIONS
-        // =================================================
 
         const formattedPosts =
             posts.map(
@@ -2020,6 +2477,7 @@ export const getFeedPosts = async (
                             post.reactions
                         )
                     ) {
+
                         post.reactions.forEach(
                             reaction => {
 
@@ -2028,6 +2486,7 @@ export const getFeedPosts = async (
                                         reaction.type
                                     ] !== undefined
                                 ) {
+
                                     reactionCounts[
                                         reaction.type
                                     ]++;
@@ -2041,6 +2500,7 @@ export const getFeedPosts = async (
                                         userId
                                     )
                                 ) {
+
                                     userReaction =
                                         reaction.type;
                                 }
@@ -2049,6 +2509,7 @@ export const getFeedPosts = async (
                     }
 
                     return {
+
                         ...post,
 
                         user:
@@ -2075,7 +2536,6 @@ export const getFeedPosts = async (
                                 )
                                 : false,
 
-                        // NEW REACTION DATA
                         reactionCounts,
 
                         userReaction,
@@ -2104,6 +2564,7 @@ export const getFeedPosts = async (
         });
 
     } catch (error) {
+
         console.error(
             "GET FEED ERROR:",
             error
@@ -2126,7 +2587,9 @@ export const likePost = async (
     req,
     res
 ) => {
+
     try {
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
@@ -2181,7 +2644,10 @@ export const likePost = async (
 
         let liked;
 
-        if (index === -1) {
+        if (
+            index === -1
+        ) {
+
             post.likes_count.push(
                 userId
             );
@@ -2189,6 +2655,7 @@ export const likePost = async (
             liked = true;
 
         } else {
+
             post.likes_count.splice(
                 index,
                 1
@@ -2209,6 +2676,7 @@ export const likePost = async (
         });
 
     } catch (error) {
+
         console.error(
             "LIKE POST ERROR:",
             error
@@ -2231,7 +2699,9 @@ export const reactToPost = async (
     req,
     res
 ) => {
+
     try {
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
@@ -2304,13 +2774,14 @@ export const reactToPost = async (
                     String(
                         item.user
                     ) ===
-                    String(userId)
+                    String(
+                        userId
+                    )
             );
 
         let userReaction =
             null;
 
-        // USER ALREADY HAS A REACTION
         if (
             existingIndex !== -1
         ) {
@@ -2320,7 +2791,6 @@ export const reactToPost = async (
                     existingIndex
                 ].type;
 
-            // SAME REACTION = REMOVE
             if (
                 existingReaction ===
                 reaction
@@ -2336,7 +2806,6 @@ export const reactToPost = async (
 
             } else {
 
-                // DIFFERENT REACTION = CHANGE
                 post.reactions[
                     existingIndex
                 ].type =
@@ -2348,7 +2817,6 @@ export const reactToPost = async (
 
         } else {
 
-            // NEW REACTION
             post.reactions.push({
                 user: userId,
                 type: reaction
@@ -2359,10 +2827,6 @@ export const reactToPost = async (
         }
 
         await post.save();
-
-        // =================================================
-        // COUNT EACH REACTION
-        // =================================================
 
         const reactionCounts = {
             love: 0,
@@ -2380,6 +2844,7 @@ export const reactToPost = async (
                         item.type
                     ] !== undefined
                 ) {
+
                     reactionCounts[
                         item.type
                     ]++;
@@ -2399,6 +2864,7 @@ export const reactToPost = async (
         });
 
     } catch (error) {
+
         console.error(
             "REACT TO POST ERROR:",
             error
@@ -2423,7 +2889,9 @@ export const getLikedPeople = async (
     req,
     res
 ) => {
+
     try {
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
@@ -2482,6 +2950,7 @@ export const getLikedPeople = async (
         });
 
     } catch (error) {
+
         console.error(
             "GET LIKED PEOPLE ERROR:",
             error
@@ -2504,7 +2973,9 @@ export const addComment = async (
     req,
     res
 ) => {
+
     try {
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
@@ -2567,6 +3038,7 @@ export const addComment = async (
         });
 
     } catch (error) {
+
         console.error(
             "ADD COMMENT ERROR:",
             error
@@ -2589,7 +3061,9 @@ export const getComments = async (
     req,
     res
 ) => {
+
     try {
+
         const {
             postId
         } = req.params;
@@ -2636,15 +3110,18 @@ export const getComments = async (
 
         users.forEach(
             user => {
+
                 userMap[
                     user._id.toString()
                 ] = user;
+
             }
         );
 
         const formattedComments =
             comments.map(
                 comment => ({
+
                     ...comment,
 
                     user:
@@ -2652,6 +3129,7 @@ export const getComments = async (
                             comment.user
                                 ?.toString()
                         ] || null
+
                 })
             );
 
@@ -2663,6 +3141,7 @@ export const getComments = async (
         });
 
     } catch (error) {
+
         console.error(
             "GET COMMENTS ERROR:",
             error
@@ -2685,7 +3164,9 @@ export const sharePost = async (
     req,
     res
 ) => {
+
     try {
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
@@ -2740,6 +3221,7 @@ export const sharePost = async (
         });
 
     } catch (error) {
+
         console.error(
             "SHARE POST ERROR:",
             error
@@ -2762,7 +3244,9 @@ export const deletePost = async (
     req,
     res
 ) => {
+
     try {
+
         const userId =
             req.authUserId ||
             req.auth?.userId;
@@ -2827,6 +3311,7 @@ export const deletePost = async (
         });
 
     } catch (error) {
+
         console.error(
             "DELETE POST ERROR:",
             error

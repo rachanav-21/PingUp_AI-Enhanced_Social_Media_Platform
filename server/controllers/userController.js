@@ -1,7 +1,70 @@
 import User from "../models/User.js";
+
 import Post from "../models/Post.js";
+
 import bcrypt from "bcryptjs";
+
 import jwt from "jsonwebtoken";
+
+import fs from "fs";
+
+import imagekit from "../configs/imagekit.js";
+
+
+// =====================================================
+// IMAGEKIT UPLOAD HELPER
+// =====================================================
+
+const uploadToImageKit = async (file, folder) => {
+  if (!file) {
+    return null;
+  }
+
+  try {
+    console.log("Uploading file to ImageKit:", file.originalname);
+
+    const result = await imagekit.files.upload({
+      file: fs.createReadStream(file.path),
+      fileName: file.originalname,
+      folder: folder
+    });
+
+    console.log("ImageKit upload successful:", result.url);
+
+    // Delete temporary Multer file
+    try {
+      fs.unlinkSync(file.path);
+      console.log("Temporary file deleted:", file.path);
+    } catch (deleteError) {
+      console.log(
+        "Temporary file delete warning:",
+        deleteError.message
+      );
+    }
+
+    return result.url;
+  } catch (error) {
+    console.error(
+      "IMAGEKIT UPLOAD ERROR:",
+      error
+    );
+
+    // Try to delete temporary file even when upload fails
+    try {
+      if (file.path && fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+    } catch (deleteError) {
+      console.log(
+        "Temporary file cleanup error:",
+        deleteError.message
+      );
+    }
+
+    throw error;
+  }
+};
+
 
 // =====================================================
 // GET USER DATA
@@ -69,6 +132,18 @@ export const updateUserData = async (req, res) => {
       });
     }
 
+    console.log("=================================");
+    console.log("UPDATE USER DATA");
+    console.log("Authenticated User ID:", userId);
+    console.log("Request Body:", req.body);
+    console.log(
+      "Uploaded Files:",
+      req.files
+        ? Object.keys(req.files)
+        : "No files"
+    );
+    console.log("=================================");
+
     const {
       full_name,
       username,
@@ -77,6 +152,10 @@ export const updateUserData = async (req, res) => {
     } = req.body;
 
     const updateData = {};
+
+    // =================================================
+    // TEXT DATA
+    // =================================================
 
     if (full_name !== undefined) {
       updateData.full_name = full_name;
@@ -94,42 +173,75 @@ export const updateUserData = async (req, res) => {
       updateData.location = location;
     }
 
+
     // =================================================
-    // PROFILE & COVER IMAGE
+    // PROFILE IMAGE
     // =================================================
 
-    if (req.files) {
+    if (
+      req.files &&
+      req.files.profile &&
+      req.files.profile.length > 0
+    ) {
+      const profileFile =
+        req.files.profile[0];
 
-      // Profile image
-      if (
-        req.files.profile &&
-        req.files.profile.length > 0
-      ) {
-        const profileFile =
-          req.files.profile[0];
+      console.log(
+        "Profile image received:",
+        profileFile.originalname
+      );
 
+      const profileUrl =
+        await uploadToImageKit(
+          profileFile,
+          "pingup/profile"
+        );
+
+      if (profileUrl) {
         updateData.profile_picture =
-          profileFile.path ||
-          profileFile.secure_url ||
-          profileFile.location ||
-          "";
-      }
-
-      // Cover image
-      if (
-        req.files.cover &&
-        req.files.cover.length > 0
-      ) {
-        const coverFile =
-          req.files.cover[0];
-
-        updateData.cover_photo =
-          coverFile.path ||
-          coverFile.secure_url ||
-          coverFile.location ||
-          "";
+          profileUrl;
       }
     }
+
+
+    // =================================================
+    // COVER IMAGE
+    // =================================================
+
+    if (
+      req.files &&
+      req.files.cover &&
+      req.files.cover.length > 0
+    ) {
+      const coverFile =
+        req.files.cover[0];
+
+      console.log(
+        "Cover image received:",
+        coverFile.originalname
+      );
+
+      const coverUrl =
+        await uploadToImageKit(
+          coverFile,
+          "pingup/cover"
+        );
+
+      if (coverUrl) {
+        updateData.cover_photo =
+          coverUrl;
+      }
+    }
+
+
+    // =================================================
+    // UPDATE USER IN MONGODB
+    // =================================================
+
+    console.log(
+      "MongoDB Update Data:",
+      updateData
+    );
 
     const user =
       await User.findByIdAndUpdate(
@@ -141,12 +253,29 @@ export const updateUserData = async (req, res) => {
         }
       ).select("-password");
 
+
     if (!user) {
       return res.status(404).json({
         success: false,
         message: "User not found"
       });
     }
+
+
+    console.log(
+      "User updated successfully"
+    );
+
+    console.log(
+      "Profile Picture:",
+      user.profile_picture
+    );
+
+    console.log(
+      "Cover Photo:",
+      user.cover_photo
+    );
+
 
     res.json({
       success: true,
@@ -200,7 +329,6 @@ export const discoverUsers = async (req, res) => {
       });
     }
 
-    // Escape regex characters
     const escapedSearch =
       search.replace(
         /[.*+?^${}()|[\]\\]/g,
@@ -211,7 +339,6 @@ export const discoverUsers = async (req, res) => {
       _id: {
         $ne: userId
       },
-
       $or: [
         {
           username: {
@@ -226,7 +353,6 @@ export const discoverUsers = async (req, res) => {
           }
         }
       ]
-
     })
       .select(
         "_id email username full_name bio profile_picture cover_photo location isVerified followers following connections pendingConnections"
@@ -331,7 +457,8 @@ export const followUser = async (req, res) => {
     if (alreadyFollowing) {
       return res.status(400).json({
         success: false,
-        message: "You are already following this user"
+        message:
+          "You are already following this user"
       });
     }
 
@@ -348,7 +475,8 @@ export const followUser = async (req, res) => {
 
     res.json({
       success: true,
-      message: "User followed successfully"
+      message:
+        "User followed successfully"
     });
 
   } catch (error) {
@@ -442,7 +570,8 @@ export const unfollowUser = async (req, res) => {
 
     res.json({
       success: true,
-      message: "User unfollowed successfully"
+      message:
+        "User unfollowed successfully"
     });
 
   } catch (error) {
@@ -488,7 +617,8 @@ export const sendConnectionRequest = async (
     if (!targetUserId) {
       return res.status(400).json({
         success: false,
-        message: "Target user ID is required"
+        message:
+          "Target user ID is required"
       });
     }
 
@@ -498,7 +628,8 @@ export const sendConnectionRequest = async (
     ) {
       return res.status(400).json({
         success: false,
-        message: "You cannot connect with yourself"
+        message:
+          "You cannot connect with yourself"
       });
     }
 
@@ -511,14 +642,16 @@ export const sendConnectionRequest = async (
     if (!currentUser) {
       return res.status(404).json({
         success: false,
-        message: "Current user not found"
+        message:
+          "Current user not found"
       });
     }
 
     if (!targetUser) {
       return res.status(404).json({
         success: false,
-        message: "Target user not found"
+        message:
+          "Target user not found"
       });
     }
 
@@ -534,7 +667,6 @@ export const sendConnectionRequest = async (
       targetUser.pendingConnections = [];
     }
 
-    // Already connected
     const alreadyConnected =
       targetUser.connections.some(
         id =>
@@ -545,11 +677,11 @@ export const sendConnectionRequest = async (
     if (alreadyConnected) {
       return res.status(400).json({
         success: false,
-        message: "You are already connected"
+        message:
+          "You are already connected"
       });
     }
 
-    // Already pending
     const alreadyPending =
       targetUser.pendingConnections.some(
         id =>
@@ -560,7 +692,8 @@ export const sendConnectionRequest = async (
     if (alreadyPending) {
       return res.status(400).json({
         success: false,
-        message: "Connection request already sent"
+        message:
+          "Connection request already sent"
       });
     }
 
@@ -572,7 +705,8 @@ export const sendConnectionRequest = async (
 
     res.json({
       success: true,
-      message: "Connection request sent"
+      message:
+        "Connection request sent"
     });
 
   } catch (error) {
@@ -607,37 +741,33 @@ export const getUserConnections = async (
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: "User not authenticated"
+        message:
+          "User not authenticated"
       });
     }
 
     const user =
       await User.findById(userId)
-
         .populate({
           path: "followers",
           select:
             "_id username full_name bio profile_picture cover_photo location isVerified"
         })
-
         .populate({
           path: "following",
           select:
             "_id username full_name bio profile_picture cover_photo location isVerified"
         })
-
         .populate({
           path: "pendingConnections",
           select:
             "_id username full_name bio profile_picture cover_photo location isVerified"
         })
-
         .populate({
           path: "connections",
           select:
             "_id username full_name bio profile_picture cover_photo location isVerified"
         })
-
         .lean();
 
     if (!user) {
@@ -671,25 +801,17 @@ export const getUserConnections = async (
 
     res.json({
       success: true,
-
       followers,
-
       following,
-
       pendingConnections,
-
       connections,
-
       counts: {
         followers:
           followers.length,
-
         following:
           following.length,
-
         pending:
           pendingConnections.length,
-
         connections:
           connections.length
       }
@@ -731,14 +853,16 @@ export const acceptConnectionRequest = async (
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: "User not authenticated"
+        message:
+          "User not authenticated"
       });
     }
 
     if (!requestUserId) {
       return res.status(400).json({
         success: false,
-        message: "Request user ID is required"
+        message:
+          "Request user ID is required"
       });
     }
 
@@ -753,14 +877,16 @@ export const acceptConnectionRequest = async (
     if (!currentUser) {
       return res.status(404).json({
         success: false,
-        message: "Current user not found"
+        message:
+          "Current user not found"
       });
     }
 
     if (!requestUser) {
       return res.status(404).json({
         success: false,
-        message: "Request user not found"
+        message:
+          "Request user not found"
       });
     }
 
@@ -786,11 +912,11 @@ export const acceptConnectionRequest = async (
     if (!requestExists) {
       return res.status(400).json({
         success: false,
-        message: "No pending connection request found"
+        message:
+          "No pending connection request found"
       });
     }
 
-    // Remove pending request
     currentUser.pendingConnections =
       currentUser.pendingConnections.filter(
         id =>
@@ -798,7 +924,6 @@ export const acceptConnectionRequest = async (
           String(requestUserId)
       );
 
-    // Add connection to current user
     const currentAlreadyConnected =
       currentUser.connections.some(
         id =>
@@ -812,7 +937,6 @@ export const acceptConnectionRequest = async (
       );
     }
 
-    // Add connection to request user
     const requestAlreadyConnected =
       requestUser.connections.some(
         id =>
@@ -831,7 +955,8 @@ export const acceptConnectionRequest = async (
 
     res.json({
       success: true,
-      message: "Connection accepted successfully"
+      message:
+        "Connection accepted successfully"
     });
 
   } catch (error) {
@@ -864,7 +989,8 @@ export const getUserProfiles = async (
     if (!userId) {
       return res.status(400).json({
         success: false,
-        message: "User ID is required"
+        message:
+          "User ID is required"
       });
     }
 
@@ -876,13 +1002,11 @@ export const getUserProfiles = async (
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found"
+        message:
+          "User not found"
       });
     }
 
-    // =================================================
-    // GET USER POSTS WITH FULL AUTHOR INFORMATION
-    // =================================================
     const posts =
       await Post.find({
         user: userId
